@@ -1891,12 +1891,24 @@ void Session::exec()
     std::string windowName = QString(m_Computer->name + " - Moonlight").toStdString();
 #endif
 
+    Uint32 platformWindowFlags = StreamUtils::getPlatformWindowFlags();
+#ifdef HAVE_PYROWAVE
+    // The PyroWave decoder presents through its own Granite Vulkan swapchain, so
+    // it needs a Vulkan-capable window. getPlatformWindowFlags() only returns
+    // SDL_WINDOW_VULKAN when built with libplacebo, so force it here when the
+    // negotiated format is PyroWave (m_ActiveVideoFormat is set by drSetup during
+    // LiStartConnection, which runs before this window is created).
+    if (m_ActiveVideoFormat & VIDEO_FORMAT_MASK_PYROWAVE) {
+        platformWindowFlags |= SDL_WINDOW_VULKAN;
+    }
+#endif
+
     m_Window = SDL_CreateWindow(windowName.c_str(),
                                 x,
                                 y,
                                 width,
                                 height,
-                                defaultWindowFlags | StreamUtils::getPlatformWindowFlags());
+                                defaultWindowFlags | platformWindowFlags);
     if (!m_Window) {
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                     "SDL_CreateWindow() failed with platform flags: %s",

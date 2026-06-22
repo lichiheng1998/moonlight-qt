@@ -22,6 +22,7 @@
 #include "wsi.hpp"
 #include "command_buffer.hpp"
 #include "image.hpp"
+#include "thread_id.hpp"
 
 // PyroWave
 #include "pyrowave_decoder.hpp"
@@ -41,6 +42,21 @@
 #include <vector>
 
 using namespace Vulkan;
+
+// Granite keys its per-thread command pools off a thread-local index that is
+// only set on threads it spawned (or the main thread). moonlight calls us from
+// its own decoder thread, which Granite doesn't know about, so every Device
+// operation logs "Thread does not exist in thread manager...". We are the only
+// thread doing Granite work for this Device, so claim index 0. Call this on
+// entry to every Granite-touching method (cheap thread-local write, guarded).
+static void claimGraniteThread()
+{
+    static thread_local bool registered = false;
+    if (!registered) {
+        Util::register_thread_index(0);
+        registered = true;
+    }
+}
 
 // SPIR-V for the present pass (compiled offline, embedded as C arrays). Shared
 // verbatim with the Android JNI decoder.
@@ -137,6 +153,7 @@ PyroWaveVideoDecoder::PyroWaveVideoDecoder()
 
 PyroWaveVideoDecoder::~PyroWaveVideoDecoder()
 {
+    claimGraniteThread();
     if (d->device)
         d->device->wait_idle();
     for (auto &img : d->yuvImages)
@@ -220,6 +237,8 @@ bool PyroWaveVideoDecoder::initialize(PDECODER_PARAMETERS params)
     d->height   = params->height;
     d->testOnly = params->testOnly;
 
+    claimGraniteThread();
+
     if (!Context::init_loader(nullptr)) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "PyroWave: Vulkan loader init failed");
         return false;
@@ -244,13 +263,25 @@ bool PyroWaveVideoDecoder::initialize(PDECODER_PARAMETERS params)
 
     d->platform.set_window(d->window);
 
+    // Make sure SDL's Vulkan library is loaded before querying instance
+    // extensions. A window created with SDL_WINDOW_VULKAN normally auto-loads it,
+    // but sdl2-compat (SDL2 API on an SDL3 runtime) does not always, and
+    // SDL_Vulkan_GetInstanceExtensions() then reports no extensions. Loading it
+    // explicitly is a no-op refcount bump if it is already loaded.
+    if (SDL_Vulkan_LoadLibrary(nullptr) != 0) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "PyroWave: SDL_Vulkan_LoadLibrary() failed: %s", SDL_GetError());
+    }
+
     // Build the instance with the surface extensions SDL needs for this window
     // (VK_KHR_surface + the platform-specific surface extension), so the surface
     // we create later via SDL_Vulkan_CreateSurface() is valid for it.
     std::vector<const char *> iext = SdlWSIPlatform::queryInstanceExtensions(d->window);
     if (iext.empty()) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "PyroWave: window has no Vulkan instance extensions (not a Vulkan window?)");
+                     "PyroWave: SDL_Vulkan_GetInstanceExtensions() returned none "
+                     "(window flags=0x%x, SDL error: %s)",
+                     (unsigned) SDL_GetWindowFlags(d->window), SDL_GetError());
         return false;
     }
     const char *dext[] = { "VK_KHR_swapchain" };
@@ -323,6 +354,8 @@ void PyroWaveVideoDecoder::setHdrMode(bool)
 
 int PyroWaveVideoDecoder::submitDecodeUnit(PDECODE_UNIT du)
 {
+    claimGraniteThread();
+
     // The PyroWave bitstream is a contiguous stream of self-describing packets,
     // emitted by the server as one blob per frame. moonlight-common-c splits that
     // blob into an LENTRY chain whose chunk boundaries do NOT respect PyroWave
