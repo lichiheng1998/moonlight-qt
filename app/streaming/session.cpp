@@ -740,6 +740,13 @@ bool Session::initialize(QQuickWindow* qtWindow)
 
     // Start with all codecs and profiles in priority order
 #ifdef HAVE_PYROWAVE
+    // Priority order: richest variant first. The 4:4:4 entries are pruned later
+    // if YUV444 is off (VIDEO_FORMAT_MASK_YUV444) and the 10-bit entries if HDR
+    // is off (VIDEO_FORMAT_MASK_10BIT), so the enableYUV444/enableHdr prefs are
+    // honored by the same global gates used for HEVC/AV1.
+    m_SupportedVideoFormats.append(VIDEO_FORMAT_PYROWAVE_HIGH10_444);
+    m_SupportedVideoFormats.append(VIDEO_FORMAT_PYROWAVE_MAIN10);
+    m_SupportedVideoFormats.append(VIDEO_FORMAT_PYROWAVE_HIGH8_444);
     m_SupportedVideoFormats.append(VIDEO_FORMAT_PYROWAVE);
 #endif
     m_SupportedVideoFormats.append(VIDEO_FORMAT_AV1_HIGH10_444);
