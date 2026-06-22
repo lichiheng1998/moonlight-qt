@@ -445,6 +445,62 @@ wayland {
     HEADERS += streaming/video/ffmpeg-renderers/pacer/waylandvsyncsource.h
 }
 
+pyrowave {
+    message(PyroWave decoder selected)
+
+    PYROWAVE_ROOT = /home/lichi/Sunshine/third-party/pyrowave
+    GRANITE_ROOT  = /home/lichi/Sunshine/third-party/Granite
+    GRANITE_BUILD = /home/lichi/Sunshine/build/third-party/Granite
+    PYROWAVE_BUILD = /home/lichi/Sunshine/build/third-party/pyrowave
+
+    DEFINES += HAVE_PYROWAVE
+
+    # These MUST match the defines used to build the prebuilt Granite/PyroWave
+    # static libraries (see Sunshine/build/third-party/*/CMakeFiles/*/flags.make).
+    # GRANITE_VULKAN_SYSTEM_HANDLES in particular changes the layout of
+    # Vulkan::Device (adds shader_manager/resource_manager members). Compiling
+    # pyrowave.cpp without it makes our inline-constructed Device smaller than the
+    # library's, so the library's constructor writes past it and corrupts the heap.
+    DEFINES += \
+        GRANITE_VULKAN_SYSTEM_HANDLES \
+        GRANITE_VULKAN_SPIRV_CROSS=1 \
+        GRANITE_RENDERDOC_CAPTURE \
+        VULKAN_DEBUG \
+        PYROWAVE_PRECISION=1
+
+    INCLUDEPATH += \
+        $$PYROWAVE_ROOT \
+        $$GRANITE_ROOT/vulkan \
+        $$GRANITE_ROOT/vulkan/managers \
+        $$GRANITE_ROOT/vulkan/texture \
+        $$GRANITE_ROOT/vulkan/mesh \
+        $$GRANITE_ROOT/util \
+        $$GRANITE_ROOT/application/global \
+        $$GRANITE_ROOT/filesystem \
+        $$GRANITE_ROOT/filesystem/linux \
+        $$GRANITE_ROOT/path \
+        $$GRANITE_ROOT/math \
+        $$GRANITE_ROOT/third_party/volk \
+        $$GRANITE_ROOT/third_party/khronos/vulkan-headers/include
+
+    LIBS += \
+        $$PYROWAVE_BUILD/libpyrowave.a \
+        $$GRANITE_BUILD/vulkan/libgranite-vulkan.a \
+        $$GRANITE_BUILD/math/libgranite-math.a \
+        $$GRANITE_BUILD/threading/libgranite-threading.a \
+        $$GRANITE_BUILD/filesystem/libgranite-filesystem.a \
+        $$GRANITE_BUILD/path/libgranite-path.a \
+        $$GRANITE_BUILD/third_party/libgranite-volk.a \
+        $$GRANITE_BUILD/third_party/spirv-cross/libspirv-cross-core.a \
+        $$GRANITE_BUILD/third_party/stb/libgranite-stb.a \
+        $$GRANITE_BUILD/util/libgranite-util.a \
+        $$GRANITE_BUILD/application/global/libgranite-application-global.a \
+        -ldl -lpthread
+
+    SOURCES += streaming/video/pyrowave.cpp
+    HEADERS += streaming/video/pyrowave.h
+}
+
 RESOURCES += \
     resources.qrc \
     qml.qrc

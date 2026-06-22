@@ -15,6 +15,10 @@
 #include "video/slvid.h"
 #endif
 
+#ifdef HAVE_PYROWAVE
+#include "video/pyrowave.h"
+#endif
+
 #ifdef Q_OS_WIN32
 // Scaling the icon down on Win32 looks dreadful, so render at lower res
 #define ICON_SIZE 32
@@ -299,6 +303,27 @@ bool Session::chooseDecoder(StreamingPreferences::VideoDecoderSelection vds,
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "V-sync %s",
                 enableVsync ? "enabled" : "disabled");
+
+#ifdef HAVE_PYROWAVE
+    if (videoFormat & VIDEO_FORMAT_MASK_PYROWAVE) {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Trying PyroWave decoder (format: 0x%x, testOnly: %d)",
+                    videoFormat, testOnly);
+        chosenDecoder = new PyroWaveVideoDecoder();
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "PyroWave decoder allocated");
+        if (chosenDecoder->initialize(&params)) {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "PyroWave video decoder chosen");
+            return true;
+        }
+        else {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "PyroWave decoder initialize() failed");
+            delete chosenDecoder;
+            chosenDecoder = nullptr;
+        }
+    }
+#endif
 
 #ifdef HAVE_SLVIDEO
     chosenDecoder = new SLVideoDecoder(testOnly);
@@ -714,6 +739,9 @@ bool Session::initialize(QQuickWindow* qtWindow)
                 CHANNEL_MASK_FROM_AUDIO_CONFIGURATION(m_StreamConfig.audioConfiguration));
 
     // Start with all codecs and profiles in priority order
+#ifdef HAVE_PYROWAVE
+    m_SupportedVideoFormats.append(VIDEO_FORMAT_PYROWAVE);
+#endif
     m_SupportedVideoFormats.append(VIDEO_FORMAT_AV1_HIGH10_444);
     m_SupportedVideoFormats.append(VIDEO_FORMAT_AV1_MAIN10);
     m_SupportedVideoFormats.append(VIDEO_FORMAT_H265_REXT10_444);
@@ -734,6 +762,18 @@ bool Session::initialize(QQuickWindow* qtWindow)
 
         // H.264 is already the lowest priority codec, so we don't need to do
         // any probing for deprioritization for it here.
+
+#ifdef HAVE_PYROWAVE
+        // Skip HEVC/AV1 decoder probing when PyroWave is a candidate.
+        // The probes only determine deprioritization order among HEVC/AV1/H264;
+        // if PyroWave is negotiated it supersedes them, and if it isn't,
+        // validateLaunch will fall back to H264 (the server always advertises H264).
+        // More importantly, the HEVC test-decode passes through FFmpeg software decode
+        // which can corrupt heap state before the subsequent PyroWave decoder allocation.
+        if (m_SupportedVideoFormats & VIDEO_FORMAT_MASK_PYROWAVE) {
+            break;
+        }
+#endif
 
         auto hevcDA = getDecoderAvailability(testWindow,
                                              m_Preferences->videoDecoderSelection,
@@ -965,6 +1005,21 @@ bool Session::validateLaunch(SDL_Window* testWindow)
 
     if (m_Preferences->videoDecoderSelection == StreamingPreferences::VDS_FORCE_SOFTWARE) {
         emitLaunchWarning(tr("Your settings selection to force software decoding may cause poor streaming performance."));
+    }
+
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "serverCodecModeSupport: 0x%x, SCM_PYROWAVE: 0x%x",
+                m_Computer->serverCodecModeSupport, SCM_PYROWAVE);
+
+    // Remove PyroWave if the server doesn't advertise it — prevents passing an unknown
+    // format value to moonlight-common-c which causes heap corruption.
+    if (m_SupportedVideoFormats & VIDEO_FORMAT_MASK_PYROWAVE) {
+        if (m_SupportedVideoFormats.maskByServerCodecModes(m_Computer->serverCodecModeSupport & SCM_MASK_PYROWAVE) == 0) {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "PyroWave not advertised by server, removing");
+            m_SupportedVideoFormats.removeByMask(VIDEO_FORMAT_MASK_PYROWAVE);
+        } else {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "PyroWave advertised by server, keeping");
+        }
     }
 
     if (m_SupportedVideoFormats & VIDEO_FORMAT_MASK_AV1) {
