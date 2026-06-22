@@ -173,6 +173,17 @@ bool PyroWaveVideoDecoder::initialize(PDECODER_PARAMETERS params)
         return true;
 
     // ---- SDL renderer + YUV texture ------------------------------------
+    // Mailbox / newest-frame-wins semantics (the Android JNI path achieves this
+    // via Granite WSI PresentMode::UnlockedNoTearing == VK_PRESENT_MODE_MAILBOX).
+    // That present-mode knob does not apply here because this path does not own a
+    // Vulkan swapchain -- it decodes on the GPU, reads back into a SINGLE-SLOT CPU
+    // buffer (pendingY/Cb/Cr, overwritten each decode so the newest frame always
+    // wins, no queue buildup) and presents via SDL on the main thread. Crucially
+    // the renderer is created WITHOUT SDL_RENDERER_PRESENTVSYNC, so SDL_RenderPresent
+    // never blocks the decode thread on vsync. Decode and present run on separate
+    // threads, so the Android FIFO problem (present blocking decode -> upstream
+    // decode-unit queue fills -> dropped frames -> stutter) cannot occur here. The
+    // mailbox optimization is therefore already in effect; no code change is needed.
     d->renderer = SDL_CreateRenderer(params->window, -1, SDL_RENDERER_ACCELERATED);
     if (!d->renderer) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
